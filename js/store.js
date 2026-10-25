@@ -8,7 +8,7 @@ const KEY = "aisory.v1";
 const uid = () => crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
 const DEFAULT_STATE = {
-  profile: null, // { parentName, childName, ageMonths, concerns: [], goalMin }
+  profile: null, // { parentName, childName, ageMonths, ageSetAt, concerns: [], goalMin }
   logs: [],
   chat: [],
   settings: { apiKey: "" },
@@ -41,7 +41,12 @@ export const store = {
   subscribe: (fn) => listeners.add(fn),
 
   setProfile(profile) {
-    state.profile = { goalMin: 10, concerns: [], ...state.profile, ...profile };
+    // Forms show the current age; only a different value counts as a new age (dated today).
+    const incoming = { ...profile };
+    const ageChanged = incoming.ageMonths != null && incoming.ageMonths !== currentAgeMonths(state.profile);
+    if (!ageChanged) delete incoming.ageMonths;
+    state.profile = { goalMin: 10, concerns: [], ...state.profile, ...incoming };
+    if (ageChanged || !state.profile.ageSetAt) state.profile.ageSetAt = dateKey();
     save();
   },
 
@@ -105,6 +110,7 @@ export const store = {
       parentName: "Mom",
       childName: "Luna",
       ageMonths: 26,
+      ageSetAt: dateKey(),
       concerns: ["speech", "eye"],
       goalMin: 10,
     };
@@ -149,6 +155,17 @@ export const store = {
     save();
   },
 };
+
+// Age entered at setup plus the whole months since then, so age-based checks stay correct over time.
+export function currentAgeMonths(profile) {
+  if (!profile?.ageMonths) return null;
+  if (!profile.ageSetAt) return profile.ageMonths;
+  const set = new Date(profile.ageSetAt + "T00:00:00");
+  const now = new Date();
+  let months = (now.getFullYear() - set.getFullYear()) * 12 + (now.getMonth() - set.getMonth());
+  if (now.getDate() < set.getDate()) months -= 1;
+  return profile.ageMonths + Math.max(0, months);
+}
 
 export function dateKey(d = new Date()) {
   const y = d.getFullYear();

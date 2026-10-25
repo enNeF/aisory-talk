@@ -1,8 +1,8 @@
 import { ACTIVITIES, CATEGORIES, CONCERNS, MOODS, QUICK_PROMPTS } from "./data.js";
-import { store, dateKey } from "./store.js";
+import { store, dateKey, currentAgeMonths } from "./store.js";
 import {
   weekStats, todayStats, rollingTotals, comparableTotals, pctChange, recommend, dashboardInsight, progressInsight,
-  skillGap, localCoach, askClaude, friendlyError, activitiesMentioned,
+  skillGap, overallSummary, localCoach, askClaude, friendlyError, activitiesMentioned,
 } from "./ai.js";
 
 const app = document.getElementById("app");
@@ -211,6 +211,7 @@ views.home = () => {
       right: `<a class="avatar" href="#/settings" aria-label="Settings">${esc(p.childName[0] || "★")}</a>`,
     })}
     ${installBanner()}
+    ${overallCard(overallSummary(s), { compact: true })}
     <a class="card today-card" href="#/log">
       <strong>📈 Today's Progress</strong>
       <span>${t.count} activit${t.count === 1 ? "y" : "ies"} completed · ${t.minutes} min total</span>
@@ -244,6 +245,43 @@ views.home = () => {
     ${recent.length ? `<div class="card list">${recent.map((l) => logRow(l)).join("")}</div>` : `<div class="card empty">No activities yet. Start with the suggestion above!</div>`}`,
   };
 };
+
+// Overall result: compact on Home (links to Progress), full breakdown on Progress.
+const RATING_ICON = { good: "✅", warn: "⚠️", bad: "🔻", none: "➖" };
+
+function overallCard(r, { compact = false } = {}) {
+  // A red flag outranks the practice score, so the score isn't headlined next to it.
+  const showScore = r.score != null && r.status !== "doctor";
+  const scoreHtml = showScore ? `<span class="overall-score"><strong>${r.score}</strong>/100</span>` : "";
+  const head = `<div class="overall-head">
+      <span class="overall-emoji" aria-hidden="true">${r.emoji}</span>
+      <div class="grow"><span class="overall-kicker">Overall result</span><h3>${esc(r.title)}</h3></div>
+      ${scoreHtml}
+    </div>`;
+
+  if (compact) {
+    return `<a class="card overall overall-${r.status}" href="#/progress">
+      ${head}
+      <p>${esc(r.flags[0] || r.message)}</p>
+      <p class="overall-basis">${esc(r.basis)} · <span class="link">See details ›</span></p>
+    </a>`;
+  }
+
+  return `<section class="card overall overall-${r.status}" aria-label="Overall result">
+    ${head}
+    ${!showScore ? "" : `<div class="overall-bar" role="img" aria-label="Score ${r.score} out of 100"><div style="width:${r.score}%"></div></div>
+      <div class="overall-scale"><span>Low &lt;50</span><span>Good 50–74</span><span>Great 75+</span></div>`}
+    <p>${esc(r.message)}</p>
+    ${r.flags.length ? `<div class="overall-flags"><strong>What we noticed in the logs</strong><ul>${r.flags.map((f) => `<li>${esc(f)}</li>`).join("")}</ul></div>` : ""}
+    ${r.factors.length ? `<div class="overall-factors">${showScore ? "" : `<p class="factor-title">Home practice (score ${r.score}/100)</p>`}${r.factors.map((f) => `<div class="factor">
+        <span aria-hidden="true">${RATING_ICON[f.rating]}</span>
+        <div class="grow"><strong>${esc(f.label)}</strong><span class="muted small">${esc(f.value)}</span></div>
+        <span class="factor-pts">${f.points}/${f.weight}</span>
+      </div>`).join("")}</div>` : ""}
+    <div class="overall-next"><strong>What to do next</strong><ul>${r.nextSteps.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>
+    <p class="overall-basis">Based on ${esc(r.basis)} (last 14 days). A summary of home practice, not a medical diagnosis. If you're worried about ${esc(child())}, talk to a doctor at any time.</p>
+  </section>`;
+}
 
 function trend(change, hadPrev, unit = "%") {
   if (!hadPrev) return "";
@@ -479,6 +517,8 @@ views.progress = () => {
 
   return {
     html: `${header("Progress Tracking 📊", `${esc(child())}'s weekly overview`)}
+    ${overallCard(overallSummary(s))}
+    <h2 class="section">Week by week</h2>
     <div class="week-nav">
       <button class="icon-btn" data-action="week" data-dir="-1" aria-label="Previous week">‹</button>
       <strong>${progressOffset === 0 ? "This week" : progressOffset === -1 ? "Last week" : range}</strong>
@@ -576,7 +616,7 @@ views.settings = () => {
       <label>Your name<input name="parentName" required value="${esc(p.parentName)}"></label>
       <div class="two">
         <label>Child's name<input name="childName" required value="${esc(p.childName)}"></label>
-        <label>Age (months)<input name="ageMonths" type="number" min="6" max="72" required value="${esc(p.ageMonths)}"></label>
+        <label>Age (months)<input name="ageMonths" type="number" min="6" max="72" required value="${esc(currentAgeMonths(p))}"></label>
       </div>
       <label>Daily goal per area (min)<input name="goalMin" type="number" min="5" max="60" value="${p.goalMin || 10}"></label>
       <fieldset><legend>Support focus</legend>

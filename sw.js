@@ -1,5 +1,5 @@
 // Offline support: network-first for the app shell, falling back to the cache when offline.
-const CACHE = "aisory-v1";
+const CACHE = "aisory-v2";
 const SHELL = [
   "./",
   "./index.html",

@@ -2,7 +2,7 @@
 // insights, skill-gap monitoring, the offline coach and the optional
 // Claude-powered assistant.
 import { ACTIVITIES, CATEGORIES, COACH_TOPICS, COACH_FALLBACK, MOODS } from "./data.js";
-import { dateKey } from "./store.js";
+import { dateKey, currentAgeMonths } from "./store.js";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const moodScore = (id) => MOODS.find((m) => m.id === id)?.score ?? 0.6;
@@ -170,7 +170,8 @@ export function recommend(state, count = 4) {
       reasons.push({ w: 0.2, text: "New activity to try" });
     }
 
-    if (profile?.ageMonths && profile.ageMonths + 3 < a.ageMin) score -= 1;
+    const age = currentAgeMonths(profile);
+    if (age && age + 3 < a.ageMin) score -= 1;
     score += (hash(a.id + todayKey) % 100) / 600; // gentle daily variety
 
     reasons.sort((x, y) => y.w - x.w);
@@ -247,6 +248,169 @@ export function skillGap(state) {
   return { skills, risk, action: text, sessions };
 }
 
+// ---------- Overall result ----------
+
+// Logs from a rolling window: daysAgo 0 = ending today, length in days.
+function windowLogs(logs, daysAgo, length) {
+  const end = new Date();
+  end.setDate(end.getDate() - daysAgo);
+  const start = new Date(end);
+  start.setDate(start.getDate() - (length - 1));
+  const [from, to] = [dateKey(start), dateKey(end)];
+  return { logs: logs.filter((l) => l.date >= from && l.date <= to), from: start, to: end };
+}
+
+function summarize(logs) {
+  const n = logs.length;
+  const sum = (f) => logs.reduce((s, l) => s + (+l[f] || 0), 0);
+  const speech = sum("speech");
+  const gestures = sum("gestures");
+  return {
+    sessions: n,
+    activeDays: new Set(logs.map((l) => l.date)).size,
+    speech,
+    gestures,
+    commPerSession: n ? (speech + gestures) / n : 0,
+    speechPerSession: n ? speech / n : 0,
+    engagement: n ? sum("engagement") / n : 0,
+    negativeMoods: logs.filter((l) => l.mood === "fussy" || l.mood === "tired").length,
+    categories: new Set(logs.map((l) => l.category).filter((c) => CATEGORIES[c])),
+  };
+}
+
+const round1 = (x) => Math.round(x * 10) / 10;
+const rating = (ratio) => (ratio >= 0.75 ? "good" : ratio >= 0.45 ? "warn" : "bad");
+
+// Summarises the child's last 14 days of logged home practice into one of:
+// insufficient | doctor | great | good | low. Every reason shown to the parent
+// is computed from the logs below — nothing is assumed or invented.
+export function overallSummary(state) {
+  const c = state.profile?.childName || "your child";
+  const age = currentAgeMonths(state.profile);
+  const cur = windowLogs(state.logs, 0, 14);
+  const prior = windowLogs(state.logs, 14, 14);
+  const now = summarize(cur.logs);
+  const before = summarize(prior.logs);
+  const last7 = summarize(windowLogs(state.logs, 0, 7).logs);
+  const prev7 = summarize(windowLogs(state.logs, 7, 7).logs);
+  const fmt = (d) => d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  const basis = `${now.sessions} session${now.sessions === 1 ? "" : "s"} on ${now.activeDays} day${now.activeDays === 1 ? "" : "s"} · ${fmt(cur.from)} – ${fmt(cur.to)}`;
+
+  if (now.sessions < 3 || now.activeDays < 2) {
+    return {
+      status: "insufficient",
+      title: "Not enough data yet",
+      emoji: "📋",
+      message: `Log at least 3 sessions on 2 or more days to see ${c}'s overall result. So far: ${now.sessions} session${now.sessions === 1 ? "" : "s"} in the last 14 days.`,
+      score: null,
+      factors: [],
+      flags: [],
+      nextSteps: ["Try one short activity from AI Tips today and save it to the log."],
+      basis,
+    };
+  }
+
+  // Red flags — need enough sessions to be meaningful, and always point to a professional.
+  const flags = [];
+  if (now.sessions >= 5) {
+    if (age >= 18 && now.speech === 0) {
+      flags.push(`No speech attempts were recorded in any of the last ${now.sessions} sessions, and ${c} is ${age} months old.`);
+    }
+    if (age >= 12 && now.gestures === 0) {
+      flags.push(`No gestures (such as pointing or waving) were recorded in the last ${now.sessions} sessions, and ${c} is ${age} months old.`);
+    }
+    if (before.sessions >= 5 && before.commPerSession >= 2 && now.commPerSession <= before.commPerSession * 0.5) {
+      flags.push(`Speech attempts and gestures fell from ${round1(before.commPerSession)} to ${round1(now.commPerSession)} per session compared with the 2 weeks before. A drop like this can be a sign of losing skills.`);
+    }
+    if (now.engagement < 35 && now.negativeMoods / now.sessions >= 0.6) {
+      flags.push(`Engagement averaged ${Math.round(now.engagement)}% and ${now.negativeMoods} of ${now.sessions} sessions were fussy or tired.`);
+    }
+  }
+
+  // Score out of 100 from five measured factors.
+  const consistency = Math.min(1, now.activeDays / 8);
+  const engagement = now.engagement / 100;
+  const communication = Math.min(1, now.commPerSession / 4);
+  const coverage = now.categories.size / 3;
+  const missing = Object.keys(CATEGORIES).filter((k) => !now.categories.has(k)).map((k) => CATEGORIES[k].label.toLowerCase());
+
+  let trend = 0.6;
+  let trendText = "Not enough sessions in both weeks to compare";
+  let trendChange = null;
+  if (last7.sessions >= 2 && prev7.sessions >= 2 && prev7.commPerSession > 0) {
+    trendChange = Math.round(((last7.commPerSession - prev7.commPerSession) / prev7.commPerSession) * 100);
+    trend = trendChange >= 10 ? 1 : trendChange > -10 ? 0.6 : 0.2;
+    trendText = trendChange >= 10 ? `Up ${trendChange}% vs the week before` : trendChange > -10 ? "Steady vs the week before" : `Down ${Math.abs(trendChange)}% vs the week before`;
+  }
+
+  const factors = [
+    { id: "consistency", label: "Practice days", value: `${now.activeDays} of the last 14 days`, ratio: consistency, weight: 30 },
+    { id: "engagement", label: "Engagement", value: `${Math.round(now.engagement)}% on average`, ratio: engagement, weight: 25 },
+    { id: "communication", label: "Speech attempts + gestures", value: `${round1(now.commPerSession)} per session (${now.speech} + ${now.gestures} in total)`, ratio: communication, weight: 25 },
+    { id: "coverage", label: "Areas practised", value: missing.length ? `${now.categories.size} of 3 · no ${missing.join(" or ")} yet` : "All 3 areas", ratio: coverage, weight: 10 },
+    { id: "trend", label: "This week's trend", value: trendText, ratio: trend, weight: 10 },
+  ].map((f) => ({
+    ...f,
+    rating: f.id !== "trend" ? rating(f.ratio) : trendChange === null || trend === 0.6 ? "none" : trend === 1 ? "good" : "bad",
+    points: Math.round(f.ratio * f.weight),
+  }));
+  const score = Math.round(factors.reduce((s, f) => s + f.ratio * f.weight, 0));
+
+  const tips = {
+    consistency: `Aim for a short session on most days — even 5–10 minutes counts.`,
+    engagement: `Keep sessions short and choose activities ${c} enjoyed before (see AI Tips).`,
+    communication: `During play, pause and wait about 5 seconds so ${c} has a chance to babble, gesture or say a word.`,
+    coverage: `Add a ${missing[0] || "new"} activity — it hasn't been practised in the last 2 weeks.`,
+    trend: `Speech attempts and gestures dipped this week — go back to the activities that worked well before.`,
+  };
+  // Tips for the factors losing the most points first.
+  const lost = (f) => f.weight * (1 - f.ratio);
+  const weakest = factors
+    .filter((f) => (f.id === "trend" ? trendChange !== null && trendChange <= -10 : f.rating !== "good"))
+    .sort((a, b) => lost(b) - lost(a));
+
+  if (flags.length) {
+    return {
+      status: "doctor",
+      title: "Consider seeing a doctor",
+      emoji: "🩺",
+      message: `Some patterns in ${c}'s recent logs are worth checking with a doctor or speech-language therapist. This is not a diagnosis — a professional can tell you more.`,
+      score,
+      factors,
+      flags,
+      nextSteps: [
+        "Book a check-up with your doctor or a speech-language therapist.",
+        "Show them this Progress screen, or export your data from Settings.",
+        "Keep practising at home while you wait — it still helps.",
+      ],
+      basis,
+    };
+  }
+
+  // Regular practice is the base of home intervention: "Doing great" needs practice on most
+  // days (6+ of 14), and fewer than 4 practice days in two weeks always counts as low.
+  let status = score >= 75 ? "great" : score >= 50 ? "good" : "low";
+  if (status === "great" && now.activeDays < 6) status = "good";
+  if (now.activeDays < 4) status = "low";
+  const copy = {
+    great: { title: "Doing great", emoji: "🌟", message: `${c} is practising regularly and responding well. Keep up the routine!` },
+    good: { title: "Good progress", emoji: "👍", message: `${c} is making progress. A few small changes could help even more.` },
+    low: { title: "Progress is low", emoji: "🔸", message: `${c}'s recent practice is lower than recommended. Small, regular sessions can make a real difference.` },
+  }[status];
+  if (status === "low" && score >= 50) {
+    copy.message = `${c} responds well in sessions, but practice happened on only ${now.activeDays} of the last 14 days. Small, regular sessions make the biggest difference.`;
+  } else if (status === "good" && score >= 75) {
+    copy.message = `${c} is doing well in sessions. Practising on 6 or more days in 2 weeks would move this to "Doing great".`;
+  }
+  const nextSteps = weakest.slice(0, status === "low" ? 2 : 1).map((f) => tips[f.id]);
+  if (!nextSteps.length) {
+    const room = factors.filter((f) => f.id !== "trend" && f.ratio < 1).sort((a, b) => lost(b) - lost(a))[0];
+    nextSteps.push(status !== "great" && room ? tips[room.id] : "Keep the same routine, and try a new activity now and then to keep it fun.");
+  }
+
+  return { status, ...copy, score, factors, flags, nextSteps, basis };
+}
+
 // ---------- Offline coach ----------
 
 export function localCoach(text, state) {
@@ -293,7 +457,7 @@ function systemPrompt(state) {
 
   return `You are the AI Tips assistant inside AI-SORY TALK, a mobile app that helps parents and guardians support toddlers with early speech delay and autism (ASD) indicators at home.
 
-Who you are talking to: ${p.parentName || "a parent"}, caring for ${p.childName || "their child"} (${p.ageMonths || "unknown"} months old). Support focus: ${(p.concerns || []).join(", ") || "not specified"}.
+Who you are talking to: ${p.parentName || "a parent"}, caring for ${p.childName || "their child"} (${currentAgeMonths(p) || "unknown"} months old). Support focus: ${(p.concerns || []).join(", ") || "not specified"}.
 
 This week's practice: ${week.totals.sessions} sessions, ${week.totals.minutes} min, ${week.totals.speech} speech attempts, ${week.totals.gestures} gestures, average engagement ${week.totals.engagement}%. By category — ${cats}.
 Recent log entries:

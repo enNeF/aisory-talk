@@ -10,13 +10,29 @@ and keeps all data on the device.
 
 | Screen | What it does |
 |---|---|
-| **Dashboard** | Today's progress, Speech / Sensory / Social rings vs. daily goal, last-7-day speech attempts, gesture use and engagement with trends, suggested next activity, recent activities |
+| **Dashboard** | Overall result card (see below), today's progress, Speech / Sensory / Social rings vs. daily goal, last-7-day speech attempts, gesture use and engagement with trends, suggested next activity, recent activities |
 | **AI Recommendations** | Gen-AI style recommender ranks 15 activities using weekly practice balance, the parent's support focus, how the child responded before (mood + engagement), age and variety. Each card says *why* it was picked. Plus an AI Insight. |
 | **AI Tips Chat** | Parents ask "what do I do now?". Uses the built-in offline coach (English + common Malay keywords), or Claude when an API key is added in Settings. Replies link straight to matching activities. |
 | **Guided Exercises** | Step-by-step activities with a timer, then a quick observation form (mood, speech attempts, gestures, engagement) that logs the session automatically |
 | **Activity Log** | Manual entries with date, activity, category, duration, mood, speech attempts, gestures, engagement and notes |
-| **Progress** | Weekly minutes, sessions, active days, speech-attempt and engagement charts, category breakdown, week-by-week navigation, and a practice-based skill-gap check (predictive monitoring) |
+| **Progress** | Full overall-result breakdown, weekly minutes, sessions, active days, speech-attempt and engagement charts, category breakdown, week-by-week navigation, and a practice-based skill-gap check (predictive monitoring) |
 | **Settings** | Profile, daily goal, Claude API key, install, export data (JSON), demo data, reset |
+
+### Overall result
+
+A single summary of the child's last 14 days of logged practice, shown on Home and explained in full on Progress.
+It is computed only from the Activity Log and never diagnoses.
+
+| Result | When |
+|---|---|
+| **Not enough data yet** | Fewer than 3 sessions, or sessions on fewer than 2 days, in the last 14 days |
+| **Consider seeing a doctor** | Any red flag in the logs (each needs 5+ sessions): no speech attempts at 18+ months; no gestures at 12+ months; speech attempts + gestures per session halved vs the 2 weeks before; engagement under 35% with 60%+ fussy or tired sessions |
+| **Doing great** | Score 75+ and practice on 6+ of the 14 days |
+| **Good progress** | Score 50–74 (or 75+ with fewer than 6 practice days) |
+| **Progress is low** | Score under 50, or practice on fewer than 4 of the 14 days |
+
+Score (0–100): practice days 30 (8+ days = full), engagement 25, speech attempts + gestures per session 25
+(4+ = full), areas practised 10, this week vs last week 10. The child's age counts up from the age entered at setup.
 
 Use **"Try the demo (Luna, 26 months)"** on the first screen to fill the app with two weeks of sample data for a booth demo.
 
